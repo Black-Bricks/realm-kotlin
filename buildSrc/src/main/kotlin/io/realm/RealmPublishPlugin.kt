@@ -34,6 +34,7 @@ import org.gradle.plugins.signing.SigningExtension
 import org.gradle.plugins.signing.SigningPlugin
 import java.io.File
 import java.time.Duration
+import java.net.URI
 
 // Custom options for POM configurations that might differ between Realm modules
 open class PomOptions {
@@ -86,6 +87,26 @@ class RealmPublishPlugin : Plugin<Project> {
         }
     }
 
+    private fun configureGitHubPackagesRepository(project: Project) {
+        val githubActor = getPropertyValue(project, "GITHUB_ACTOR")
+        val githubToken = getPropertyValue(project, "GITHUB_TOKEN")
+        
+        if (githubActor.isNotEmpty() && githubToken.isNotEmpty()) {
+            project.extensions.getByType<PublishingExtension>().apply {
+                repositories {
+                    maven {
+                        name = "GitHubPackages"
+                        url = URI("https://maven.pkg.github.com/Black-Bricks/realm-kotlin")
+                        credentials {
+                            username = githubActor
+                            password = githubToken
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun configureSignedBuild(signBuild: Boolean, project: Project) {
         // The nexus publisher plugin can only be applied to top-level projects.
         // See https://github.com/gradle-nexus/publish-plugin/issues/81
@@ -97,6 +118,7 @@ class RealmPublishPlugin : Plugin<Project> {
         } else {
             configureSubProject(project, signBuild)
             configureTestRepository(project)
+            configureGitHubPackagesRepository(project)
         }
     }
 

@@ -193,3 +193,17 @@ tasks.register("uploadDokka") {
         }
     }
 }
+
+tasks.register("publishAllPublicationsToGitHubPackagesRepository") {
+    group = "Publishing"
+    description = "Publish all publications to GitHub Packages repository"
+    
+    dependsOn(
+        ":gradle-plugin:publishAllPublicationsToGitHubPackagesRepository",
+        ":plugin-compiler:publishAllPublicationsToGitHubPackagesRepository",
+        ":plugin-compiler-shaded:publishAllPublicationsToGitHubPackagesRepository",
+        ":library-base:publishAllPublicationsToGitHubPackagesRepository",
+        ":cinterop:publishAllPublicationsToGitHubPackagesRepository",
+        ":jni-swig-stub:publishAllPublicationsToGitHubPackagesRepository"
+    )
+}
