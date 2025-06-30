@@ -18,14 +18,12 @@
 
 package io.realm.kotlin.compiler
 
-import io.realm.kotlin.compiler.ClassIds.ASYMMETRIC_OBJECT_INTERFACE
 import io.realm.kotlin.compiler.ClassIds.BASE_REALM_OBJECT_INTERFACE
 import io.realm.kotlin.compiler.ClassIds.EMBEDDED_OBJECT_INTERFACE
 import io.realm.kotlin.compiler.ClassIds.KOTLIN_COLLECTIONS_LISTOF
 import io.realm.kotlin.compiler.ClassIds.PERSISTED_NAME_ANNOTATION
 import io.realm.kotlin.compiler.ClassIds.REALM_OBJECT_INTERFACE
 import io.realm.kotlin.compiler.FqNames.PACKAGE_TYPES
-import io.realm.kotlin.compiler.Names.ASYMMETRIC_REALM_OBJECT
 import io.realm.kotlin.compiler.Names.EMBEDDED_REALM_OBJECT
 import io.realm.kotlin.compiler.Names.REALM_OBJECT
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
@@ -74,6 +72,7 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
@@ -147,8 +146,7 @@ val ClassDescriptor.isRealmObjectCompanion
 
 val realmObjectInterfaceFqNames = setOf(REALM_OBJECT_INTERFACE)
 val realmEmbeddedObjectInterfaceFqNames = setOf(EMBEDDED_OBJECT_INTERFACE)
-val realmAsymmetricObjectInterfaceFqNames = setOf(ASYMMETRIC_OBJECT_INTERFACE)
-val anyRealmObjectInterfacesFqNames = realmObjectInterfaceFqNames + realmEmbeddedObjectInterfaceFqNames + realmAsymmetricObjectInterfaceFqNames
+val anyRealmObjectInterfacesFqNames = realmObjectInterfaceFqNames + realmEmbeddedObjectInterfaceFqNames
 
 fun IrType.classIdOrFail(): ClassId = getClass()?.classId ?: error("Can't get classId of ${render()}")
 
@@ -194,16 +192,15 @@ inline fun ClassDescriptor.hasInterfacePsi(interfaces: Set<String>): Boolean {
 // `RealmObject` (Kotlin, interface).
 val realmObjectPsiNames = setOf("RealmObject", "io.realm.kotlin.types.RealmObject")
 val embeddedRealmObjectPsiNames = setOf("EmbeddedRealmObject", "io.realm.kotlin.types.EmbeddedRealmObject")
-val asymmetricRealmObjectPsiNames = setOf("AsymmetricRealmObject", "io.realm.kotlin.types.AsymmetricRealmObject")
 val realmJavaObjectPsiNames = setOf("io.realm.RealmObject()", "RealmObject()")
 val ClassDescriptor.isRealmObject: Boolean
     get() = this.hasInterfacePsi(realmObjectPsiNames) && !this.hasInterfacePsi(realmJavaObjectPsiNames)
 val ClassDescriptor.isEmbeddedRealmObject: Boolean
     get() = this.hasInterfacePsi(embeddedRealmObjectPsiNames)
 val ClassDescriptor.isBaseRealmObject: Boolean
-    get() = this.hasInterfacePsi(realmObjectPsiNames + embeddedRealmObjectPsiNames + asymmetricRealmObjectPsiNames) && !this.hasInterfacePsi(realmJavaObjectPsiNames)
+    get() = this.hasInterfacePsi(realmObjectPsiNames + embeddedRealmObjectPsiNames) && !this.hasInterfacePsi(realmJavaObjectPsiNames)
 
-val realmObjectTypes: Set<Name> = setOf(REALM_OBJECT, EMBEDDED_REALM_OBJECT, ASYMMETRIC_REALM_OBJECT)
+val realmObjectTypes: Set<Name> = setOf(REALM_OBJECT, EMBEDDED_REALM_OBJECT)
 val realmObjectClassIds = realmObjectTypes.map { name -> ClassId(PACKAGE_TYPES, name) }
 
 // This is the K2 equivalent of our PSI hack to determine if a symbol has a RealmObject base class.
@@ -226,7 +223,7 @@ val FirClassSymbol<*>.isBaseRealmObject: Boolean
                             )
                 }
                 // After SUPERTYPES stage
-                is FirResolvedTypeRef -> typeRef.type.classId in realmObjectClassIds
+                is FirResolvedTypeRef -> typeRef.coneType.classId in realmObjectClassIds
                 else -> false
             }
         }
@@ -251,17 +248,11 @@ val IrClass.isRealmObject
 val IrClass.isEmbeddedRealmObject: Boolean
     get() = superTypes.any { it.classId == EMBEDDED_OBJECT_INTERFACE }
 
-val IrClass.isAsymmetricRealmObject: Boolean
-    get() = superTypes.any { it.classId == ASYMMETRIC_OBJECT_INTERFACE }
-
 val IrType.classId: ClassId?
     get() = this.getClass()?.classId
 
 val IrType.isEmbeddedRealmObject: Boolean
     get() = superTypes().any { it.classId == EMBEDDED_OBJECT_INTERFACE }
-
-val IrType.isAsymmetricRealmObject: Boolean
-    get() = superTypes().any { it.classId == ASYMMETRIC_OBJECT_INTERFACE }
 
 internal fun IrFunctionBuilder.at(startOffset: Int, endOffset: Int) = also {
     this.startOffset = startOffset
@@ -424,7 +415,7 @@ data class SchemaProperty(
     companion object {
         fun getPersistedName(declaration: IrProperty): String {
             @Suppress("UNCHECKED_CAST")
-            return (declaration.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConstImpl<String>).value
+            return (declaration.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConst).value!!.toString()
         }
     }
 }
@@ -446,9 +437,6 @@ internal fun <T : IrExpression> buildOf(
         type = containerType.typeWith(elementType),
         symbol = function,
         typeArgumentsCount = 1,
-        valueArgumentsCount = 1,
-        origin = null,
-        superQualifierSymbol = null
     ).apply {
         putTypeArgument(index = 0, type = elementType)
         putValueArgument(
@@ -593,11 +581,11 @@ fun IrBlockBuilder.createSafeCallConstruction(
         statements += receiverVariable
         statements += IrWhenImpl(startOffset, endOffset, resultType).apply {
             val condition = IrCallImpl(
-                startOffset, endOffset, context.irBuiltIns.booleanType,
-                context.irBuiltIns.eqeqSymbol,
-                valueArgumentsCount = 2,
-                typeArgumentsCount = 0,
-                origin = IrStatementOrigin.EQEQ
+                startOffset = startOffset,
+                endOffset = endOffset,
+                type = context.irBuiltIns.booleanType,
+                origin = IrStatementOrigin.EQEQ,
+                symbol = context.irBuiltIns.eqeqSymbol,
             ).apply {
                 putValueArgument(0, IrGetValueImpl(startOffset, endOffset, receiverVariableSymbol))
                 putValueArgument(
@@ -684,7 +672,7 @@ fun getLinkingObjectPropertyName(backingField: IrField): String {
 fun getSchemaClassName(clazz: IrClass): String {
     return if (clazz.hasAnnotation(PERSISTED_NAME_ANNOTATION)) {
         @Suppress("UNCHECKED_CAST")
-        return (clazz.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConstImpl<String>).value
+        return (clazz.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConst).value!!.toString()
     } else {
         clazz.name.identifier
     }
