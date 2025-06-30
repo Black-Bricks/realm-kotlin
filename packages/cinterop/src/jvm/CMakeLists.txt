@@ -34,6 +34,8 @@ include_directories(${REALM_INCLUDE_DIRS})
 # See https://github.com/realm/realm-core/blob/master/CMakeLists.txt#L174 for the full list.
 set(REALM_ENABLE_SYNC ON)
 set(REALM_BUILD_LIB_ONLY ON)
+# Disable REALM_APP_SERVICES to ensure realm_sync_user_create_config struct is available
+set(REALM_APP_SERVICES OFF)
 add_subdirectory("${CMAKE_SOURCE_DIR}/../../../external/core" core EXCLUDE_FROM_ALL)
 
 if(ANDROID)
